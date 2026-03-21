@@ -1,0 +1,44 @@
+{
+  "nodes": {
+    "el-init": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1771934739,
+        "narHash": "sha256-DrLJdPD1tBYhdB7sJHkD2JpLEhuaUCiOBezirKFOyuA=",
+        "owner": "emacs-os",
+        "repo": "el-init",
+        "rev": "40fa3e7e0418fc9238c12ea33e7402294ce78ba0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "emacs-os",
+        "repo": "el-init",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1773821835,
+        "narHash": "sha256-TJ3lSQtW0E2JrznGVm8hOQGVpXjJyXY2guAxku2O9A4=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "b40629efe5d6ec48dd1efba650c797ddbd39ace0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "el-init": "el-init",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
