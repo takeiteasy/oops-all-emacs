@@ -46,6 +46,7 @@ pkgs/
 
 system/
   vm.nix                   # NixOS QEMU VM config (Milestone 1.2 test environment)
+  elinit-init.nix          # NixOS module: el-init as PID 1 (replaces systemd)
 
 scripts/
   run-vm.sh                # Launch QEMU VM on macOS (uses system.build.toplevel)
@@ -99,8 +100,8 @@ not apply to Emacs 30.2. Phase 1 (EXWM) has no dependency on OpenGL.
 | Milestone | Description | Status |
 |-----------|-------------|--------|
 | 1.1 | Patched Emacs derivation (static, PID1 patches) | ✅ Done |
-| 1.2 | Bootable QEMU VM | 🔄 In progress |
-| 1.3 | el-init as PID 1 (`init=` kernel param) | Pending |
+| 1.2 | Bootable QEMU VM | ✅ Done |
+| 1.3 | el-init as PID 1 (`init=` kernel param) | ✅ Done |
 | 1.4 | Core services (D-Bus, PipeWire, NetworkManager, Xorg) | Pending |
 | 1.5 | EXWM graphical desktop session | Pending |
 

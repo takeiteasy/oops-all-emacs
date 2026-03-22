@@ -31,6 +31,11 @@ stdenv.mkDerivation {
     cp elinit*.el "$dest/"
     # Install compiled files if present
     cp elinit*.elc "$dest/" 2>/dev/null || true
+
+    # Install elinitctl CLI tool
+    mkdir -p $out/bin
+    cp sbin/elinitctl $out/bin/elinitctl
+    chmod +x $out/bin/elinitctl
   '';
 
   meta = {

@@ -1,20 +1,25 @@
-# Milestone 1.2: Bootable QEMU VM
+# Emacs-OS QEMU VM configuration
 #
-# A minimal NixOS system that boots to a root shell with the PID1-patched
-# Emacs available. Standard systemd is still PID 1 at this stage — the
-# purpose is to validate the boot chain and confirm the Emacs binary works.
+# Milestones 1.2 + 1.3: Bootable QEMU VM with el-init as PID 1.
+# NixOS handles Stage 1 (initrd) and Stage 2 (activation scripts),
+# then execs into emacs-pid1 --pid1 instead of systemd.
 #
 # Usage:
 #   nix build .#vm && ./scripts/run-vm.sh ./result
 #
 # Inside the VM:
-#   emacs --version                          → 30.2
+#   ps -p 1 -o comm=                            → emacs
+#   elinitctl status                             → shows running services
 #   emacs --pid1 --batch -Q \
-#     --eval '(message "%s" pid1-mode)'      → t
+#     --eval '(message "%s" pid1-mode)'          → t
 
 { config, pkgs, lib, emacs-pid1, elinit, elinit-libexec, ... }:
 
 {
+  imports = [
+    ./elinit-init.nix
+  ];
+
   system.stateVersion = "25.05";
   networking.hostName = "emacs-os";
 
@@ -26,6 +31,7 @@
     emacs-pid1
     elinit
     elinit-libexec
+    pkgs.procps      # ps, top — needed for verification
   ];
 
   # Make el-init Elisp discoverable on Emacs load-path
@@ -64,17 +70,10 @@
   ];
 
   # ── Workarounds for building on macOS linux-builder ──────────────────────
-  # Several NixOS modules produce empty buildEnv derivations (firmware,
-  # console-env, etc.) that fail because builder.pl doesn't create the
-  # output directory when there are no input paths. Provide stubs.
   hardware.firmware = lib.mkForce [
     (pkgs.runCommand "empty-firmware" {} "mkdir -p $out/lib/firmware")
   ];
-
-  # Disable console font/keymap setup — not needed for serial console VM
   console.font = null;
   console.keyMap = lib.mkDefault "us";
-
-  # Disable i18n glyphs (prevents empty console-env buildEnv)
   i18n.supportedLocales = [ "en_US.UTF-8/UTF-8" ];
 }
