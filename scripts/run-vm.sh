@@ -63,5 +63,7 @@ exec "$QEMU" \
   -append "$KERNEL_PARAMS" \
   -drive "file=$DISK,if=virtio,format=qcow2" \
   -virtfs "local,path=/nix/store,mount_tag=nix-store,security_model=none,readonly=on" \
+  -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+  -device virtio-net-device,netdev=net0 \
   -nographic \
   "$@"

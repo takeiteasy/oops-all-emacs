@@ -1,8 +1,10 @@
-# Milestone 1.3: Replace systemd with el-init as PID 1
+# Milestones 1.3 + 1.4: el-init as PID 1 with core system services
 #
 # Overrides boot.systemdExecutable so that NixOS's stage-2 init script
 # execs into emacs-pid1 instead of systemd. All NixOS activation
 # infrastructure (user creation, /etc, /bin/sh) runs first.
+#
+# Services: D-Bus, NetworkManager, PipeWire, WirePlumber, Xorg (disabled).
 
 { config, pkgs, lib, emacs-pid1, elinit, elinit-libexec, ... }:
 
@@ -52,8 +54,14 @@ let
   # Our wrapper sets up directories then execs emacs-pid1.
   emacsInit = pkgs.writeShellScript "emacs-init" ''
     mkdir -p /var/log/elinit /var/lib/elinit /var/lib/elinit/units /run/elinit
+    mkdir -p /run/dbus /run/pipewire /var/lib/NetworkManager /var/lib/dbus
     hostname emacs-os
+    # Generate machine-id if missing (D-Bus requires it)
+    if [ ! -f /etc/machine-id ]; then
+      ${pkgs.dbus}/bin/dbus-uuidgen > /etc/machine-id
+    fi
     export TERM=''${TERM:-dumb}
+    export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:${elinit}/bin:$PATH"
     echo "starting emacs-pid1 (el-init)..."
     # --fg-daemon keeps Emacs in foreground (no fork, safe for PID 1)
@@ -70,6 +78,7 @@ let
     export SHELL=/bin/sh
     export TERM=linux
     export EMACS_SOCKET_NAME=/run/elinit/elinit
+    export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:${elinit}/bin:${emacs-pid1}/bin:/run/current-system/sw/bin"
     cd /root
     echo ""
@@ -78,7 +87,8 @@ let
     exec ${pkgs.bashInteractive}/bin/bash -l
   '';
 
-  # el-init unit files with Nix store paths interpolated
+  # ── el-init unit files ─────────────────────────────────────────────────
+
   gettyUnit = pkgs.writeText "getty-ttyAMA0.el" ''
     (:id "getty-ttyAMA0"
      :description "Serial console login (auto-login root)"
@@ -96,10 +106,82 @@ let
      :description "Multi-user system")
   '';
 
+  # ── Milestone 1.4: Core services ──────────────────────────────────────
+
+  dbusUnit = pkgs.writeText "dbus.el" ''
+    (:id "dbus"
+     :description "D-Bus system message bus"
+     :command "${pkgs.dbus}/bin/dbus-daemon --system --nofork --address=unix:path=/run/dbus/system_bus_socket"
+     :type simple
+     :enabled t
+     :wanted-by ("multi-user.target")
+     :restart always
+     :logging t)
+  '';
+
+  networkmgrUnit = pkgs.writeText "networkmanager.el" ''
+    (:id "networkmanager"
+     :description "Network management daemon"
+     :command "${pkgs.networkmanager}/bin/NetworkManager --no-daemon"
+     :type simple
+     :enabled t
+     :wanted-by ("multi-user.target")
+     :requires ("dbus")
+     :after ("dbus")
+     :restart always
+     :logging t)
+  '';
+
+  pipewireUnit = pkgs.writeText "pipewire.el" ''
+    (:id "pipewire"
+     :description "PipeWire multimedia server"
+     :command "${pkgs.pipewire}/bin/pipewire"
+     :type simple
+     :enabled t
+     :wanted-by ("multi-user.target")
+     :requires ("dbus")
+     :after ("dbus")
+     :environment (("XDG_RUNTIME_DIR" . "/run/pipewire"))
+     :restart always
+     :logging t)
+  '';
+
+  wireplumberUnit = pkgs.writeText "wireplumber.el" ''
+    (:id "wireplumber"
+     :description "PipeWire session manager"
+     :command "${pkgs.wireplumber}/bin/wireplumber"
+     :type simple
+     :enabled t
+     :wanted-by ("multi-user.target")
+     :requires ("dbus" "pipewire")
+     :after ("dbus" "pipewire")
+     :environment (("XDG_RUNTIME_DIR" . "/run/pipewire"))
+     :restart always
+     :logging t)
+  '';
+
+  xorgUnit = pkgs.writeText "xorg.el" ''
+    (:id "xorg"
+     :description "X.Org display server"
+     :command "${pkgs.xorg-server}/bin/Xorg :0 -nolisten tcp vt7"
+     :type simple
+     :enabled nil
+     :wanted-by ("graphical.target")
+     :requires ("dbus")
+     :after ("dbus")
+     :restart always
+     :logging t)
+  '';
+
   unitDir = pkgs.runCommand "elinit-units" {} ''
     mkdir -p $out
     cp ${gettyUnit} $out/getty-ttyAMA0.el
     cp ${multiUserTarget} $out/multi-user.target.el
+    cp ${dbusUnit} $out/dbus.el
+    cp ${networkmgrUnit} $out/networkmanager.el
+    cp ${pipewireUnit} $out/pipewire.el
+    cp ${wireplumberUnit} $out/wireplumber.el
+    cp ${xorgUnit} $out/xorg.el
   '';
 
 in {
@@ -113,6 +195,9 @@ in {
 
   # Set EMACS_SOCKET_NAME so elinitctl finds the server without --socket
   environment.variables.EMACS_SOCKET_NAME = "/run/elinit/elinit";
+
+  # D-Bus system bus address for all shells
+  environment.variables.DBUS_SYSTEM_BUS_ADDRESS = "unix:path=/run/dbus/system_bus_socket";
 
   # Remove systemd NSS module from nsswitch — systemd isn't running,
   # so the systemd NSS plugin can't resolve users, causing login failures.

@@ -1,17 +1,17 @@
 # Emacs-OS QEMU VM configuration
 #
-# Milestones 1.2 + 1.3: Bootable QEMU VM with el-init as PID 1.
+# Milestones 1.2–1.4: Bootable QEMU VM with el-init as PID 1 and core services.
 # NixOS handles Stage 1 (initrd) and Stage 2 (activation scripts),
 # then execs into emacs-pid1 --pid1 instead of systemd.
 #
 # Usage:
-#   nix build .#vm && ./scripts/run-vm.sh ./result
+#   nix build .#packages.aarch64-linux.vm && ./scripts/run-vm.sh ./result
 #
 # Inside the VM:
 #   ps -p 1 -o comm=                            → emacs
 #   elinitctl status                             → shows running services
-#   emacs --pid1 --batch -Q \
-#     --eval '(message "%s" pid1-mode)'          → t
+#   dbus-send --system --dest=org.freedesktop.DBus --print-reply \
+#     /org/freedesktop/DBus org.freedesktop.DBus.ListNames
 
 { config, pkgs, lib, emacs-pid1, elinit, elinit-libexec, ... }:
 
@@ -32,6 +32,9 @@
     elinit
     elinit-libexec
     pkgs.procps      # ps, top — needed for verification
+    pkgs.dbus        # dbus-send, dbus-monitor — D-Bus debugging
+    pkgs.iproute2    # ip — network debugging
+    pkgs.iputils     # ping — network testing
   ];
 
   # Make el-init Elisp discoverable on Emacs load-path
@@ -40,6 +43,20 @@
   # Auto-login root for development convenience
   services.getty.autologinUser = "root";
   users.users.root.initialPassword = "emacs";
+
+  # ── NixOS service infrastructure (config files, users, binaries) ──────
+  # NixOS activation scripts handle user creation, /etc setup, etc.
+  # The systemd units NixOS generates are harmless (systemd isn't running).
+
+  # D-Bus system bus: creates messagebus user/group, /etc/dbus-1/ config
+  services.dbus.enable = true;
+
+  # NetworkManager: creates config, users, resolv.conf management
+  networking.networkmanager.enable = true;
+
+  # PipeWire + WirePlumber: config files, binaries
+  services.pipewire.enable = true;
+  services.pipewire.wireplumber.enable = true;
 
   # Root filesystem: tmpfs (stateless VM, no persistent disk needed yet)
   fileSystems."/" = {
@@ -64,9 +81,10 @@
   # Serial console for headless QEMU
   boot.kernelParams = [ "console=ttyAMA0,115200n8" ];
 
-  # Ensure 9p modules are in the initrd so /nix/store can be mounted early
+  # Ensure required modules are in the initrd
   boot.initrd.availableKernelModules = [
     "9p" "9pnet" "9pnet_virtio" "virtio_pci" "virtio_blk"
+    "virtio_net"  # QEMU virtio networking
   ];
 
   # ── Workarounds for building on macOS linux-builder ──────────────────────
