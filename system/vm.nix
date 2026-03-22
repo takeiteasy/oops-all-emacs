@@ -1,19 +1,17 @@
 # Emacs-OS QEMU VM configuration
 #
-# Milestones 1.2–1.4: Bootable QEMU VM with el-init as PID 1 and core services.
-# NixOS handles Stage 1 (initrd) and Stage 2 (activation scripts),
-# then execs into emacs-pid1 --pid1 instead of systemd.
+# Milestones 1.2–1.5: Bootable QEMU VM with el-init as PID 1,
+# core services, and EXWM graphical desktop.
 #
 # Usage:
 #   nix build .#packages.aarch64-linux.vm && ./scripts/run-vm.sh ./result
+#   EMACS_OS_HEADLESS=1 ./scripts/run-vm.sh ./result    # headless mode
 #
 # Inside the VM:
-#   ps -p 1 -o comm=                            → emacs
 #   elinitctl status                             → shows running services
-#   dbus-send --system --dest=org.freedesktop.DBus --print-reply \
-#     /org/freedesktop/DBus org.freedesktop.DBus.ListNames
+#   ps -p 1 -o comm=                            → emacs
 
-{ config, pkgs, lib, emacs-pid1, elinit, elinit-libexec, ... }:
+{ config, pkgs, lib, emacs-pid1, elinit, elinit-libexec, emacs-graphical, ... }:
 
 {
   imports = [
@@ -31,10 +29,13 @@
     emacs-pid1
     elinit
     elinit-libexec
-    pkgs.procps      # ps, top — needed for verification
-    pkgs.dbus        # dbus-send, dbus-monitor — D-Bus debugging
-    pkgs.iproute2    # ip — network debugging
-    pkgs.iputils     # ping — network testing
+    emacs-graphical
+    pkgs.procps          # ps, top
+    pkgs.dbus            # dbus-send, dbus-monitor
+    pkgs.iproute2        # ip
+    pkgs.iputils         # ping
+    pkgs.xterm           # fallback terminal
+    pkgs.xdpyinfo   # Xorg readiness check
   ];
 
   # Make el-init Elisp discoverable on Emacs load-path
@@ -45,8 +46,6 @@
   users.users.root.initialPassword = "emacs";
 
   # ── NixOS service infrastructure (config files, users, binaries) ──────
-  # NixOS activation scripts handle user creation, /etc setup, etc.
-  # The systemd units NixOS generates are harmless (systemd isn't running).
 
   # D-Bus system bus: creates messagebus user/group, /etc/dbus-1/ config
   services.dbus.enable = true;
@@ -58,16 +57,25 @@
   services.pipewire.enable = true;
   services.pipewire.wireplumber.enable = true;
 
-  # Root filesystem: tmpfs (stateless VM, no persistent disk needed yet)
+  # Xorg infrastructure: generates /etc/X11/xorg.conf, installs fonts,
+  # sets up module paths. We start Xorg via el-init, not systemd.
+  services.xserver.enable = true;
+  services.xserver.videoDrivers = [ "modesetting" ];
+  services.libinput.enable = true;
+  services.xserver.autorun = false;
+  services.xserver.displayManager.startx.enable = true;
+
+  # Fonts for Emacs and X11 applications
+  fonts.enableDefaultPackages = true;
+
+  # Root filesystem: tmpfs (increased for graphical session)
   fileSystems."/" = {
     device = "tmpfs";
     fsType = "tmpfs";
-    options = [ "mode=0755" "size=1G" ];
+    options = [ "mode=0755" "size=2G" ];
   };
 
-  # Mount the host's /nix/store via 9p so the initrd can find the stage 2
-  # init script and all Nix store paths. The QEMU script shares /nix/store
-  # as the "nix-store" 9p tag.
+  # Mount the host's /nix/store via 9p
   fileSystems."/nix/store" = {
     device = "nix-store";
     fsType = "9p";
@@ -78,13 +86,19 @@
   # No bootloader — kernel is loaded directly by QEMU -kernel flag
   boot.loader.grub.enable = false;
 
-  # Serial console for headless QEMU
+  # Serial console for headless QEMU (also works alongside graphical)
   boot.kernelParams = [ "console=ttyAMA0,115200n8" ];
+
+  # Force-load modules (no systemd-udevd to auto-detect devices)
+  boot.kernelModules = [ "virtio_input" "virtio_gpu" ];
 
   # Ensure required modules are in the initrd
   boot.initrd.availableKernelModules = [
     "9p" "9pnet" "9pnet_virtio" "virtio_pci" "virtio_blk"
-    "virtio_net"  # QEMU virtio networking
+    "virtio_net"    # QEMU virtio networking
+    "virtio_gpu"    # QEMU virtio graphics
+    "virtio_input"  # QEMU virtio keyboard/tablet
+    "drm"           # Direct Rendering Manager
   ];
 
   # ── Workarounds for building on macOS linux-builder ──────────────────────

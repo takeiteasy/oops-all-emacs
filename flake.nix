@@ -18,6 +18,7 @@
         emacs-pid1 = pkgs.callPackage ./pkgs/emacs-pid1 { inherit el-init; };
         elinit = pkgs.callPackage ./pkgs/elinit { inherit el-init; };
         elinit-libexec = pkgs.callPackage ./pkgs/elinit-libexec { inherit el-init; };
+        emacs-graphical = pkgs.callPackage ./pkgs/emacs-graphical {};
         # The built NixOS system closure. Use scripts/run-vm.sh to launch with
         # macOS QEMU: nix build .#vm && ./scripts/run-vm.sh ./result
         vm = self.nixosConfigurations.emacs-os-vm.config.system.build.toplevel;
@@ -32,6 +33,7 @@
               emacs-pid1 = self.packages.${system}.emacs-pid1;
               elinit = self.packages.${system}.elinit;
               elinit-libexec = self.packages.${system}.elinit-libexec;
+              emacs-graphical = self.packages.${system}.emacs-graphical;
             };
           }
         ];
