@@ -1,10 +1,10 @@
-# el-init as PID 1 with core services and EXWM graphical desktop
+# el-init as PID 1 with core services, EXWM graphical desktop, and session management
 #
 # Overrides boot.systemdExecutable so that NixOS's stage-2 init script
 # execs into emacs-pid1 instead of systemd. All NixOS activation
 # infrastructure (user creation, /etc, /bin/sh) runs first.
 #
-# Services: D-Bus, NetworkManager, PipeWire, WirePlumber, Xorg, EXWM.
+# Services: D-Bus, NetworkManager, PipeWire, WirePlumber, Xorg, EXWM, acpid.
 
 { config, pkgs, lib, emacs-pid1, elinit, elinit-libexec, emacs-graphical, ... }:
 
@@ -18,7 +18,6 @@ let
     ;; ── EXWM core ──────────────────────────────────────────────────────
     (require 'exwm)
     (require 'exwm-randr)
-    (require 'exwm-systemtray)
 
     ;; Number of workspaces
     (setq exwm-workspace-number 4)
@@ -43,6 +42,8 @@ let
                                 (vterm)
                               (term "/bin/sh"))))
             ([?\s-d] . emacs-os-elinit-dashboard)
+            ([?\s-l] . emacs-os-lock-screen)
+            ([XF86PowerOff] . emacs-os-lock-screen)
             ,@(mapcar (lambda (i)
                         `(,(kbd (format "s-%d" i)) .
                           (lambda () (interactive)
@@ -62,13 +63,15 @@ let
             ([?\C-d] . [delete])
             ([?\C-k] . [S-end delete])))
 
-    ;; ── System tray ────────────────────────────────────────────────────
-    (exwm-systemtray-enable)
-
     ;; ── Mode-line status ───────────────────────────────────────────────
     (display-time-mode 1)
     (setq display-time-24hr-format t)
     (setq display-time-default-load-average nil)
+
+    ;; ── System PATH and environment for shell commands ─────────────────
+    (add-to-list 'exec-path "/run/current-system/sw/bin")
+    (setenv "PATH" (concat "/run/current-system/sw/bin:" (getenv "PATH")))
+    (setenv "EMACS_SOCKET_NAME" "/run/elinit/elinit")
 
     ;; ── el-init dashboard ──────────────────────────────────────────────
     (defun emacs-os-elinit-dashboard ()
@@ -83,8 +86,27 @@ let
           (special-mode))
         (switch-to-buffer buf)))
 
+    ;; ── Screen lock and power management ────────────────────────────────
+    (defun emacs-os-lock-screen ()
+      "Lock the X11 screen using slock."
+      (interactive)
+      (start-process "slock" nil "/run/wrappers/bin/slock"))
+
+    (defun emacs-os-request-suspend ()
+      "Ask PID1 el-init to suspend the system."
+      (interactive)
+      (call-process "emacsclient" nil nil nil
+                    "-s" "/run/elinit/elinit"
+                    "--eval" "(emacs-os-suspend)"))
+
     ;; ── vterm ──────────────────────────────────────────────────────────
     (require 'vterm nil t)
+
+    ;; ── System tray (optional) ───────────────────────────────────────
+    (ignore-errors
+      (require 'exwm-systemtray nil t)
+      (when (fboundp 'exwm-systemtray-enable)
+        (exwm-systemtray-enable)))
 
     ;; ── Enable EXWM (must be last) ────────────────────────────────────
     (exwm-enable)
@@ -121,6 +143,38 @@ let
     (make-directory "/run/elinit" t)
     (set-file-modes "/run/elinit" #o700)
     (server-start)
+
+    ;; ── Power management (Milestone 1.6) ────────────────────────────────
+    (defvar emacs-os-pre-suspend-hook nil
+      "Hook run before system suspend.")
+
+    (defvar emacs-os-post-resume-hook nil
+      "Hook run after system resume.")
+
+    (defvar emacs-os-suspend-enabled nil
+      "When non-nil, `emacs-os-suspend' writes to /sys/power/state.
+Disabled by default because QEMU virt cannot wake from suspend.
+Set to t on real hardware where wake events (keyboard, power button) work.")
+
+    (defun emacs-os-suspend ()
+      "Lock screen and optionally suspend the system.
+Always locks via slock.  When `emacs-os-suspend-enabled' is non-nil,
+also writes freeze to /sys/power/state in a background subprocess.
+Runs `emacs-os-pre-suspend-hook' before and `emacs-os-post-resume-hook'
+after resume."
+      (interactive)
+      (run-hooks 'emacs-os-pre-suspend-hook)
+      ;; Lock screen
+      (start-process "slock" nil "/run/wrappers/bin/slock")
+      (if emacs-os-suspend-enabled
+          ;; Real hardware: suspend in background subprocess
+          (let ((proc (start-process "suspend" nil "/bin/sh" "-c"
+                        "sleep 1; echo freeze > /sys/power/state")))
+            (set-process-sentinel proc
+              (lambda (_p _e) (run-hooks 'emacs-os-post-resume-hook))))
+        ;; QEMU / no suspend: just run post-resume hook immediately
+        (message "emacs-os: suspend skipped (emacs-os-suspend-enabled is nil)")
+        (run-hooks 'emacs-os-post-resume-hook)))
   '';
 
   # ── PID 1 wrapper script ──────────────────────────────────────────────
@@ -128,6 +182,14 @@ let
     mkdir -p /var/log/elinit /var/lib/elinit /var/lib/elinit/units /run/elinit
     mkdir -p /run/dbus /run/pipewire /var/lib/NetworkManager /var/lib/dbus
     mkdir -p /tmp/.X11-unix
+    mkdir -p /home/emacs && chown emacs:users /home/emacs
+    # Set up slock setuid wrapper (security.wrappers uses systemd, which we don't run)
+    mkdir -p /run/wrappers/bin
+    cp ${pkgs.slock}/bin/slock /run/wrappers/bin/slock
+    chown root:root /run/wrappers/bin/slock
+    chmod u+s,u+rx,g+x,o+x /run/wrappers/bin/slock
+    # Create OpenGL driver symlink (normally done by systemd-tmpfiles)
+    ln -sfn ${pkgs.mesa.drivers} /run/opengl-driver
     ${pkgs.inetutils}/bin/hostname emacs-os
     # Load kernel modules (no systemd-modules-load to do this)
     ${pkgs.kmod}/bin/modprobe virtio_input 2>/dev/null || true
@@ -166,22 +228,46 @@ let
     exec ${pkgs.xorg-server}/bin/Xorg :0 \
       -nolisten tcp \
       -novtswitch \
+      -ac \
       -config /etc/X11/xorg.conf \
       -logfile /var/log/Xorg.0.log \
       vt7
   '';
 
-  # ── EXWM wrapper (waits for Xorg readiness) ──────────────────────────
+  # ── EXWM wrapper (waits for Xorg stability) ─────────────────────────
+  # Problem: udevadm trigger causes GPU device re-enumeration ~20s after
+  # Xorg starts, briefly killing the display. If EXWM connects before
+  # re-enumeration finishes, its X connection dies.
+  # Strategy: wait at least 30s total (past the re-enumeration window)
+  # AND require 5s continuous X stability before launching EXWM.
   exwmWrapper = pkgs.writeShellScript "exwm-wrapper" ''
-    # Wait for Xorg to be ready (max 30 seconds)
-    for i in $(seq 1 60); do
+    export DISPLAY=:0
+    export PATH="/run/current-system/sw/bin:$PATH"
+    STABLE=0       # consecutive seconds X has been reachable
+    WAITED=0       # total seconds waited
+    MIN_WAIT=30    # minimum wait to clear GPU re-enumeration window
+    MAX_WAIT=90    # give up after this many seconds
+    while [ $WAITED -lt $MAX_WAIT ]; do
       if ${pkgs.xdpyinfo}/bin/xdpyinfo -display :0 >/dev/null 2>&1; then
+        STABLE=$((STABLE + 1))
+      else
+        STABLE=0
+      fi
+      sleep 1
+      WAITED=$((WAITED + 1))
+      # Only launch after min wait AND stability threshold
+      if [ $WAITED -ge $MIN_WAIT ] && [ $STABLE -ge 5 ]; then
         break
       fi
-      sleep 0.5
     done
-    export DISPLAY=:0
-    exec ${emacs-graphical}/bin/emacs -Q --load ${exwmInitEl}
+    if [ $STABLE -lt 5 ]; then
+      echo "Xorg not stable after ''${MAX_WAIT}s, will retry" >&2
+      exit 1
+    fi
+    echo "Xorg stable for ''${STABLE}s (waited ''${WAITED}s total), launching EXWM" >&2
+    exec ${util-linux}/bin/runuser -u emacs -- \
+      env HOME=/home/emacs USER=emacs DISPLAY=:0 \
+      ${emacs-graphical}/bin/emacs -Q --load ${exwmInitEl}
   '';
 
   # ── el-init unit files ─────────────────────────────────────────────────
@@ -309,6 +395,43 @@ let
      :environment (("DISPLAY" . ":0")
                    ("DBUS_SYSTEM_BUS_ADDRESS" . "unix:path=/run/dbus/system_bus_socket"))
      :restart always
+     :restart-sec 5
+     :logging t)
+  '';
+
+  # ── ACPI power management (Milestone 1.6) ─────────────────────────────
+
+  acpiHandler = pkgs.writeShellScript "acpi-handler" ''
+    case "$1" in
+      button/power)
+        ${emacs-pid1}/bin/emacsclient -s /run/elinit/elinit \
+          --eval '(emacs-os-suspend)' || true
+        ;;
+    esac
+  '';
+
+  acpiEventConfig = pkgs.writeText "power" ''
+event=button/power
+action=${acpiHandler} %e
+  '';
+
+  acpiEventsDir = pkgs.runCommand "acpi-events" {} ''
+    mkdir -p $out
+    cp ${acpiEventConfig} $out/power
+  '';
+
+  # acpid: disabled on QEMU aarch64 virt (no ACPI netlink support).
+  # Power button is handled via EXWM XF86PowerOff keybinding instead.
+  # Re-enable on real hardware where ACPI events work.
+  acpidUnit = pkgs.writeText "acpid.el" ''
+    (:id "acpid"
+     :description "ACPI event daemon"
+     :command "${pkgs.acpid}/bin/acpid -f -c ${acpiEventsDir}"
+     :type simple
+     :enabled nil
+     :wanted-by ("multi-user.target")
+     :after ("udev")
+     :restart always
      :logging t)
   '';
 
@@ -323,6 +446,7 @@ let
     cp ${udevUnit} $out/udev.el
     cp ${xorgUnit} $out/xorg.el
     cp ${emacsGraphicalUnit} $out/emacs-graphical.el
+    cp ${acpidUnit} $out/acpid.el
   '';
 
 in {

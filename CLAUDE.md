@@ -104,6 +104,7 @@ not apply to Emacs 30.2. Phase 1 (EXWM) has no dependency on OpenGL.
 | 1.3 | el-init as PID 1 (`init=` kernel param) | ✅ Done |
 | 1.4 | Core services (D-Bus, PipeWire, NetworkManager, Xorg) | ✅ Done |
 | 1.5 | EXWM graphical desktop session | ✅ Done |
+| 1.6 | Login and session management | ✅ Done |
 
 ## Key Dependencies
 

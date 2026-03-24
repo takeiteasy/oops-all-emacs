@@ -1,7 +1,7 @@
 # Emacs-OS QEMU VM configuration
 #
-# Milestones 1.2–1.5: Bootable QEMU VM with el-init as PID 1,
-# core services, and EXWM graphical desktop.
+# Milestones 1.2–1.6: Bootable QEMU VM with el-init as PID 1,
+# core services, EXWM graphical desktop, and session management.
 #
 # Usage:
 #   nix build .#packages.aarch64-linux.vm && ./scripts/run-vm.sh ./result
@@ -35,15 +35,31 @@
     pkgs.iproute2        # ip
     pkgs.iputils         # ping
     pkgs.xterm           # fallback terminal
-    pkgs.xdpyinfo   # Xorg readiness check
+    pkgs.xdpyinfo        # Xorg readiness check
+    pkgs.slock            # X11 screen locker
+    pkgs.acpid            # ACPI event daemon
   ];
 
   # Make el-init Elisp discoverable on Emacs load-path
   environment.pathsToLink = [ "/share/emacs" ];
 
-  # Auto-login root for development convenience
+  # Auto-login root on serial console for development convenience
   services.getty.autologinUser = "root";
   users.users.root.initialPassword = "emacs";
+
+  # Unprivileged user for the graphical session (EXWM runs as this user)
+  users.users.emacs = {
+    isNormalUser = true;
+    initialPassword = "emacs";
+    extraGroups = [ "audio" "video" "input" "networkmanager" ];
+    home = "/home/emacs";
+  };
+
+  # PAM for slock screen locker authentication
+  security.pam.services.slock = {};
+
+  # Note: slock setuid wrapper is set up in elinit-init.nix emacsInit
+  # (security.wrappers uses systemd which we don't run)
 
   # ── NixOS service infrastructure (config files, users, binaries) ──────
 
@@ -64,6 +80,9 @@
   services.libinput.enable = true;
   services.xserver.autorun = false;
   services.xserver.displayManager.startx.enable = true;
+
+  # Mesa/OpenGL drivers (creates /run/opengl-driver symlink for Xorg)
+  hardware.graphics.enable = true;
 
   # Fonts for Emacs and X11 applications
   fonts.enableDefaultPackages = true;
@@ -90,7 +109,7 @@
   boot.kernelParams = [ "console=ttyAMA0,115200n8" ];
 
   # Force-load modules (no systemd-udevd to auto-detect devices)
-  boot.kernelModules = [ "virtio_input" "virtio_gpu" ];
+  boot.kernelModules = [ "virtio_input" "virtio_gpu" "button" ];
 
   # Ensure required modules are in the initrd
   boot.initrd.availableKernelModules = [
