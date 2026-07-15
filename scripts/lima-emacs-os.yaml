@@ -1,0 +1,39 @@
+# Lima VM for emacs-os development (Nix builds + QEMU)
+base:
+- template:_images/ubuntu-24.04
+- template:_default/mounts
+
+vmType: vz
+arch: aarch64
+cpus: 4
+memory: "8GiB"
+disk: "60GiB"
+
+mounts:
+- location: "~"
+  writable: true
+
+ssh:
+  loadDotSSHPubKeys: true
+  forwardAgent: true
+
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    apt-get update -qq
+    apt-get install -y -qq xz-utils curl git qemu-system-aarch64
+
+- mode: user
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    if ! command -v nix &>/dev/null; then
+      curl -L https://nixos.org/nix/install -o /tmp/nix-install.sh
+      sh /tmp/nix-install.sh --no-daemon
+    fi
+    . "$HOME/.nix-profile/etc/profile.d/nix.sh"
+    mkdir -p "$HOME/.config/nix"
+    grep -q 'experimental-features' "$HOME/.config/nix/nix.conf" 2>/dev/null || \
+      echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
